@@ -19,9 +19,9 @@ class MongoUserRepository(vertx: Vertx, config: JsonObject): UserProfileReposito
         mongoClient = MongoClient.createShared(vertx, config)
     }
 
-    override fun create(username: String, handle: String, email: String, guildIds: List<String>, handler: Handler<AsyncResult<Unit>>) {
+    override fun create(username: String, handle: String, email: String, guildIds: List<String>, handler: Handler<AsyncResult<UserProfile>>) {
         val userProfile = createNewUser(username, handle, email, guildIds)
-        mongoClient.insert("user", userProfile.toJson(), Handler { event ->  handleUnit(event, handler)})
+        mongoClient.insert("user", userProfile.toJson(), Handler { event ->  handleUnit(event, handler, userProfile)})
     }
 
     override fun readByUserName(userName: String, handler: Handler<AsyncResult<UserProfile>>) {
@@ -93,11 +93,11 @@ class MongoUserRepository(vertx: Vertx, config: JsonObject): UserProfileReposito
             }
         })
     }
-
-    private fun handleUnit(asyncResult: AsyncResult<String>, handler: Handler<AsyncResult<Unit>>){
+    //TODO: Rename
+    private fun handleUnit(asyncResult: AsyncResult<String>, handler: Handler<AsyncResult<UserProfile>>, user: UserProfile){
         if(asyncResult.succeeded())
         {
-            handler.handle(Future.succeededFuture())
+            handler.handle(Future.succeededFuture(user))
         }
         else {
             handler.handle(Future.failedFuture(asyncResult.cause()))

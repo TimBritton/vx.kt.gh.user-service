@@ -4,87 +4,125 @@ import com.mtt.guildhome.userservice.domain.UserProfile
 import com.mtt.guildhome.userservice.domain.mongo.MongoUserRepository
 import com.sun.net.httpserver.HttpServer
 import io.netty.handler.codec.http.HttpHeaderValues
+import io.vertx.config.ConfigRetriever
 import io.vertx.core.AbstractVerticle
 import io.vertx.core.AsyncResult
 import io.vertx.core.Future
 import io.vertx.core.Handler
 import io.vertx.core.json.JsonObject
+import io.vertx.core.logging.LoggerFactory
 import io.vertx.ext.mongo.MongoClient
 import io.vertx.ext.web.Router
 import io.vertx.ext.web.handler.BodyHandler
+import io.vertx.kotlin.config.ConfigRetrieverOptions
+import io.vertx.kotlin.config.ConfigStoreOptions
 import io.vertx.kotlin.core.json.JsonObject
 import io.vertx.kotlin.core.json.get
+import io.vertx.kotlin.core.json.json
+import io.vertx.kotlin.core.json.obj
 
 class UserServiceVerticle : AbstractVerticle() {
-
+    val log = LoggerFactory.getLogger(UserServiceVerticle::class.java)
     override fun start(startFuture: Future<Void>?) {
         //the user service crud operation service
 
-        val server = vertx.createHttpServer()
-        val mongoClient = MongoClient.createShared(vertx, createMongoConfig())
-        val userProfileRepository = MongoUserRepository(vertx, createMongoConfig())
-        val router = Router.router(vertx)
 
-        //retrieve a singular user.
-        //uses ?userId= or ?username=
-        router.get("/v1/user").produces(HttpHeaderValues.APPLICATION_JSON.toString()).handler({ event ->
-            val userId: String? = if (event.queryParam("userId").size > 0) event.queryParam("userId").first() else null
 
-            if (userId != null) {
-                userProfileRepository.readByUserProfileId(userId, Handler { result: AsyncResult<UserProfile> ->
-                    if (result.succeeded()) {
-                        event.response().setStatusCode(200).end(result.result().toJson().toBuffer())
-                    } else {
-                        event.response().setStatusCode(500).end(JsonObject("exception" to result.cause()).toBuffer())
-                    }
+        var fileStore = ConfigStoreOptions(
+                type = "file",
+                optional = true,
+                config = json {
+                    obj("path" to "./config/config.json")
                 })
-            } else {
-                val username: String? = if (event.queryParam("username").size > 0) event.queryParam("username").first() else null
 
-                if (username != null) {
-                    userProfileRepository.readByUserProfileId(username, Handler { result: AsyncResult<UserProfile> ->
-                        if (result.succeeded()) {
-                            event.response().end(result.result().toJson().toBuffer())
+
+        var envPropsStore = ConfigStoreOptions(
+                type = "env")
+
+        var sysPropsStore = ConfigStoreOptions(
+                type = "sys")
+
+        var options = ConfigRetrieverOptions(
+                stores = listOf(fileStore,envPropsStore, sysPropsStore))
+
+        var retriever = ConfigRetriever.create(vertx, options)
+
+        retriever.getConfig({ it ->
+
+            if(it.succeeded()) {
+                val externalConfig = it.result()
+                val server = vertx.createHttpServer()
+//                val mongoClient = MongoClient.createShared(vertx, createMongoConfig(externalConfig))
+                val userProfileRepository = MongoUserRepository(vertx, createMongoConfig(externalConfig))
+                val router = Router.router(vertx)
+
+                //retrieve a singular user.
+                //uses ?userId= or ?username=
+                router.get("/v1/user").produces(HttpHeaderValues.APPLICATION_JSON.toString()).handler({ event ->
+
+                    val userId: String? = if (event.queryParam("userId").size > 0) event.queryParam("userId").first() else null
+
+                    log.info("UserID: $userId")
+                    if (userId != null) {
+                        userProfileRepository.readByUserProfileId(userId, Handler { result: AsyncResult<UserProfile> ->
+                            if (result.succeeded()) {
+                                event.response().setStatusCode(200).end(result.result().toJson().toBuffer())
+                            } else {
+                                event.response().setStatusCode(500).end(JsonObject("exception" to result.cause()).toBuffer())
+                            }
+                        })
+                    } else {
+                        val username: String? = if (event.queryParam("username").size > 0) event.queryParam("username").first() else null
+
+                        if (username != null) {
+                            userProfileRepository.readByUserName(username, Handler { result: AsyncResult<UserProfile> ->
+                                if (result.succeeded()) {
+                                    event.response().setStatusCode(200).end(result.result().toJson().toBuffer())
+                                } else {
+                                    event.response().setStatusCode(500).end(JsonObject("exception" to result.cause()).toBuffer())
+                                }
+                            })
                         } else {
-                            event.response().end(JsonObject("exception" to result.cause()).toBuffer())
-                        }
-                    })
-                } else {
-                    event.response().setStatusCode(500).end(JsonObject("exception" to "Nothing Found").toBuffer())
+                            event.response().setStatusCode(500).end(JsonObject("exception" to "Nothing Found").toBuffer())
 
-                }
+                        }
+                    }
+
+
+                })
+                router.post().handler(BodyHandler.create())
+                router.post("/v1/user").consumes(HttpHeaderValues.APPLICATION_JSON.toString()).produces(HttpHeaderValues.APPLICATION_JSON.toString()).handler({ event ->
+                    val jsonObject = event.bodyAsJson
+                    userProfileRepository.create(username = jsonObject["username"],
+                            handle = jsonObject["handle"],
+                            email = jsonObject["email"],
+                            guildIds = jsonObject.getJsonArray("guildIds").toList() as List<String>,
+                            handler = Handler { response ->
+                                if (response.succeeded()) {
+                                    event.response().setStatusCode(200).end(response.result().toJson().toBuffer())
+                                } else {
+                                    event.response().setStatusCode(500).end(io.vertx.kotlin.core.json.JsonObject("error" to response.cause().message).toBuffer())
+                                }
+                            })
+
+                })
+
+
+                server.requestHandler({ router.accept(it) }).listen(8081)
+
+
             }
-
-
+            else
+            {
+                log.error("Config Retrieval has failed.")
+            }
         })
-        router.post().handler(BodyHandler.create())
-        router.post("/v1/user").consumes(HttpHeaderValues.APPLICATION_JSON.toString()).produces(HttpHeaderValues.APPLICATION_JSON.toString()).handler({ event ->
-            val jsonObject = event.bodyAsJson
-            userProfileRepository.create(username = jsonObject["username"],
-                                         handle = jsonObject["handle"],
-                                         email = jsonObject["email"],
-                                         guildIds = jsonObject.getJsonArray("guildIds").toList() as List<String>,
-                    handler= Handler{ response ->
-                        if(response.succeeded())
-                        {
-                            event.response().setStatusCode(200).end()
-                        }
-                        else
-                        {
-                            event.response().setStatusCode(500).end(response.cause().message)
-                        }
-                    })
-
-        })
-
-
-        server.requestHandler({ router.accept(it) }).listen(8080)
         super.start(startFuture)
     }
 
-    private fun createMongoConfig(): JsonObject = JsonObject("{\n" +
+    private fun createMongoConfig(config: JsonObject): JsonObject = JsonObject("{\n" +
 //        "  // Single Cluster Settings\n" +
-            "  \"host\" : \"192.168.72.107\"," +
+            "  \"host\" : \"${config.getString("MONGO:HOST", "localhost")}\"," +
             "  \"port\" : 27017,\n" +
             " \"db_name\":\"guildhome\"" +
 //        "\n" +

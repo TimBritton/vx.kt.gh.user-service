@@ -5,7 +5,7 @@ import io.vertx.core.Handler
 
 interface UserProfileRepository{
 
-    fun create(username: String, handle: String, email: String, guildIds: List<String>, handler: Handler<AsyncResult<Unit>>)
+    fun create(username: String, handle: String, email: String, guildIds: List<String>, handler: Handler<AsyncResult<UserProfile>>)
     fun readByUserName(userName: String, handler: Handler<AsyncResult<UserProfile>>)
     fun readByUserProfileId(userProfileId: String, handler: Handler<AsyncResult<UserProfile>>)
     fun deleteUserByUserName(userName: String, handler: Handler<AsyncResult<Unit>>)
